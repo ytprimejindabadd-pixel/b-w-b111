@@ -76,6 +76,7 @@ OWNER = "@BRONX_ULTRA"  # Bot Owner
 FORCE_CHANNELS = [
     "@bronx_ultra_osint",
     "@bronx_ultra_osint",
+]
     
 
 # Concurrent outbound requests cap (keeps bot fast & avoids flooding)
