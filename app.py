@@ -42,7 +42,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 
 # ---------- CONFIG ----------
-TOKEN = os.environ.get("BOT_TOKEN", "8454255227:AAGLKnj9Rpsm7jzS7FzmGbTu12TqEHUG8GU")
+TOKEN = os.environ.get("BOT_TOKEN", "8454255227:AAG_KvDzNpzu0XE_IrbqmTDVfNx_xhd64CQ")
 ADMIN_IDS = [int(x) for x in os.environ.get("ADMIN_IDS", "6840524720").split(",")]
 OWNER = "@BRONX_ULTRA"
 
