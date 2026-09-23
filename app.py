@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Premium Bronx Bomber Bot - FINAL CLEAN v4
-- All features working
-- Fixed: duplicate functions, indentation, force join
+Premium Bronx Bomber Bot - FINAL CLEAN v5
+- Fixed: force join, duplicate handlers, conversation conflicts
+- Fixed: main menu after verify, admin notifications
 """
 
 import asyncio
@@ -385,8 +385,12 @@ def db_process_refer(referrer_id, new_user_id):
 
 # ---------- FORCE JOIN ----------
 async def check_channel_membership(user_id, bot):
-    """Check membership. Bot must be ADMIN in channels. Fail-open on error."""
+    """
+    Check membership. Bot must be ADMIN in channels.
+    If bot cannot check (not admin / channel invalid) -> fail OPEN (allow user).
+    """
     missing = []
+    check_failed = False
     for channel in FORCE_CHANNELS:
         try:
             member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
@@ -398,7 +402,13 @@ async def check_channel_membership(user_id, bot):
                 logger.info(f"✅ User {user_id} in {channel} (status: {status})")
         except Exception as e:
             logger.error(f"🚨 Check failed for {channel}: {e}")
-            # Fail-open: don't block user if bot can't check
+            check_failed = True
+
+    # Fail-open if we couldn't check any channel (bot not admin, etc.)
+    if check_failed and not missing:
+        logger.warning("⚠️ Force-join check failed → allowing user (fail-open)")
+        return (True, [])
+
     return (len(missing) == 0, missing)
 
 def get_join_keyboard():
@@ -609,6 +619,32 @@ def get_main_keyboard(user_id):
         kb.append(["🛡️ Admin Panel"])
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
+# ---------- MAIN MENU TEXT ----------
+async def build_main_menu_text(bot, user_id):
+    credits = get_user_credits(user_id)
+    is_admin = user_id in ADMIN_IDS
+    role = "👑 *ADMIN*" if is_admin else "⚡ *USER*"
+    me = await bot.get_me()
+    ref_link = f"https://t.me/{me.username}?start={user_id}"
+    return (
+        "╔══════════════════════════════════╗\n"
+        "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
+        "╚══════════════════════════════════╝\n\n"
+        f"👤 *User ID:* `{user_id}`\n"
+        f"💎 *Credits:* {credits}\n"
+        f"🎖️ *Role:* {role}\n"
+        f"👑 *Owner:* {OWNER}\n\n"
+        f"{LINE}\n"
+        "🚀 *Server:* Ultra-Fast Async\n"
+        "⚡ *Multi-User:* Unlimited\n"
+        "🛡️ *Status:* ✅ Online\n"
+        f"{LINE}\n\n"
+        f"🎁 *Refer Link:*\n`{ref_link}`\n"
+        f"💡 1 Refer = {REFER_CREDITS} Credits\n"
+        f"{LINE}\n\n"
+        "👇 Use buttons below ✨"
+    )
+
 # ---------- NOTIFY ADMIN ----------
 async def notify_admin_new_user(bot, user_id, username, first_name, referrer_id=None):
     ref_line = f"🎁 *Referred By:* `{referrer_id}`" if referrer_id else "🎁 *Referred By:* `None`"
@@ -638,13 +674,14 @@ async def ensure_join(update, context) -> bool:
             "You must join our Channel & Group to use this bot.\n\n"
             "Join both, then press ✅ *Verify*."
         )
-        if update.callback_query:
-            try:
+        try:
+            if update.callback_query:
                 await update.callback_query.edit_message_text(msg, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
-            except Exception:
+            else:
+                await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
+        except Exception:
+            if update.callback_query:
                 await update.callback_query.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
-        else:
-            await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
         return False
     return True
 
@@ -680,6 +717,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
+    # Notify admin only if truly new user
     if is_new:
         try:
             await notify_admin_new_user(context.bot, user_id,
@@ -709,37 +747,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    credits = get_user_credits(user_id)
-    is_admin = user_id in ADMIN_IDS
-    role = "👑 *ADMIN*" if is_admin else "⚡ *USER*"
-    me = await context.bot.get_me()
-    ref_link = f"https://t.me/{me.username}?start={user_id}"
-
-    text = (
-        "╔══════════════════════════════════╗\n"
-        "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
-        "╚══════════════════════════════════╝\n\n"
-        f"👤 *User ID:* `{user_id}`\n"
-        f"💎 *Credits:* {credits}\n"
-        f"🎖️ *Role:* {role}\n"
-        f"👑 *Owner:* {OWNER}\n\n"
-        f"{LINE}\n"
-        "🚀 *Server:* Ultra-Fast Async\n"
-        "⚡ *Multi-User:* Unlimited\n"
-        "🛡️ *Status:* ✅ Online\n"
-        f"{LINE}\n\n"
-        f"🎁 *Refer Link:*\n`{ref_link}`\n"
-        f"💡 1 Refer = {REFER_CREDITS} Credits\n"
-        f"{LINE}\n\n"
-        "👇 Use buttons below ✨"
-    )
+    text = await build_main_menu_text(context.bot, user_id)
     if refer_credited:
         text = f"🎁 *Refer Bonus Added!*\n\n" + text
 
     await update.message.reply_text(text, reply_markup=get_main_keyboard(user_id), parse_mode=ParseMode.MARKDOWN)
 
 # ---------- CALLBACK HANDLER ----------
-async def callback_handler(update: Update, context):
+async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -749,24 +764,9 @@ async def callback_handler(update: Update, context):
     if data == "check_join":
         joined, missing = await check_channel_membership(user_id, BOT)
         if joined:
-            credits = get_user_credits(user_id)
-            is_admin = user_id in ADMIN_IDS
-            role = "👑 *ADMIN*" if is_admin else "⚡ *USER*"
-            me = await BOT.get_me()
-            ref_link = f"https://t.me/{me.username}?start={user_id}"
+            text = await build_main_menu_text(BOT, user_id)
             await query.edit_message_text(
-                "╔══════════════════════════════════╗\n"
-                "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
-                "╚══════════════════════════════════╝\n\n"
-                "✅ *VERIFIED!*\n\n"
-                f"👤 *User ID:* `{user_id}`\n"
-                f"💎 *Credits:* {credits}\n"
-                f"🎖️ *Role:* {role}\n"
-                f"👑 *Owner:* {OWNER}\n\n"
-                f"{LINE}\n"
-                f"🎁 *Refer Link:*\n`{ref_link}`\n"
-                f"{LINE}\n\n"
-                "👇 Use buttons below ✨",
+                text.replace("👇 Use buttons below ✨", "✅ *VERIFIED!*\n\n👇 Use buttons below ✨"),
                 parse_mode=ParseMode.MARKDOWN
             )
             await query.message.reply_text(
@@ -866,7 +866,8 @@ async def callback_handler(update: Update, context):
             await query.edit_message_text("⛔ Unauthorized."); return
         await manage_firebases(query)
     elif data == "back_main":
-        await query.edit_message_text("🔙 Back.", reply_markup=get_main_keyboard(user_id))
+        text = await build_main_menu_text(BOT, user_id)
+        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
     elif data.startswith("fb_delete_"):
         if user_id not in ADMIN_IDS: return
         fid = data.split("_")[2]
@@ -1518,6 +1519,7 @@ def main():
     BOT = app.bot
     set_bot(BOT)
 
+    # Conversation handler FIRST (so it takes priority)
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("bombwizard", bomb_wizard_start),
@@ -1538,6 +1540,7 @@ def main():
     )
     app.add_handler(conv)
 
+    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("bomb", quick_bomb))
@@ -1545,7 +1548,6 @@ def main():
     app.add_handler(CommandHandler("buy", buycredits_command))
     app.add_handler(CommandHandler("redeem", redeem_command))
     app.add_handler(CommandHandler("history", history_command))
-    app.add_handler(CommandHandler("cancel", cancel_job_command))
     app.add_handler(CommandHandler("refer", refer_command))
     app.add_handler(CommandHandler("myrefers", my_referrals))
 
@@ -1562,7 +1564,9 @@ def main():
     app.add_handler(CommandHandler("addfb", add_firebase_command))
     app.add_handler(CommandHandler("deletefb", delete_firebase_command))
 
+    # Text buttons
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
+    # Callback queries LAST
     app.add_handler(CallbackQueryHandler(callback_handler))
 
     logger.info("🔥 Bronx Ultra Bomber Bot started.")
