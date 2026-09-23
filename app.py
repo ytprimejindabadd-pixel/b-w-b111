@@ -12,7 +12,7 @@ Premium Bronx Bomber Bot - FULLY FIXED v3
 
 import asyncio
 try:
-    asyncio.get_event_loop()
+    asyncio.get_running_loop()
 except RuntimeError:
     asyncio.set_event_loop(asyncio.new_event_loop())
 
@@ -670,6 +670,10 @@ async def ensure_join(update, context) -> bool:
             await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
         return False
     return True
+
+# ---------- PING ----------
+async def ping(update, context):
+    await update.message.reply_text("🏓 Pong! ⚡ *Bot is alive.*", parse_mode=ParseMode.MARKDOWN)
 
 # ---------- /START ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
