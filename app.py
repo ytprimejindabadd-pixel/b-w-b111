@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
 """
-Premium Bronx Bomber Bot - FULLY FIXED v3
-- All original features preserved
-- FIXED: /start reply, Online Devices, button handler
-- FIXED: Stats shows ONLY user count (no numbers)
-- FIXED: Refer system 100% real (DB UNIQUE)
-- ADDED: Inline "Send Now" button (no need to type now)
-- ADDED: Buy Credit option (1 credit = ₹1)
-- ADDED: Health server for Render
+Premium Bronx Bomber Bot - FINAL CLEAN v4
+- All features working
+- Fixed: duplicate functions, indentation, force join
 """
 
 import asyncio
@@ -20,16 +15,13 @@ import io
 import json
 import logging
 import sqlite3
-import re
-import sys
-import functools
 import random
 import string
 import threading
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Tuple
 from urllib.parse import urlparse
 from uuid import uuid4
 
@@ -38,9 +30,7 @@ from telegram import (
     Update,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
-    KeyboardButton,
     ReplyKeyboardMarkup,
-    ReplyKeyboardRemove,
 )
 from telegram.ext import (
     Application,
@@ -60,21 +50,18 @@ TOKEN = os.environ.get("BOT_TOKEN", "8454255227:AAGBi0RaNAsYbjRb1RtibuLme3895r9f
 ADMIN_IDS = [6840524720]
 OWNER = "@BRONX_ULTRA"
 BUY_CONTACT = "@BRONX_ULTRA"
-
 CHANNEL_LINK = "https://t.me/bronx_ultra_osint"
 GROUP_LINK = "https://t.me/+mZxPZHUNHA0xMGYy"
 
-FORCE_CHANNELS = [
-    "@bronx_ultra_osint",
-]
+FORCE_CHANNELS = ["@bronx_ultra_osint"]
 
 REFER_CREDITS = 5
-CREDIT_PRICE = 1  # 1 credit = 1 rupee
+CREDIT_PRICE = 1
 MAX_CONCURRENT_REQUESTS = 100
 
 if not TOKEN or TOKEN == "YOUR_BOT_TOKEN_HERE":
     print("❌ ERROR: Bot token is not set.")
-    sys.exit(1)
+    exit(1)
 
 # ---------- LOGGING ----------
 logging.basicConfig(
@@ -120,54 +107,6 @@ def get_http_semaphore():
     if _http_semaphore is None:
         _http_semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
     return _http_semaphore
-
-# ---------- FORCE JOIN ----------
-# ---------- FORCE JOIN (FIXED) ----------
-async def check_channel_membership(user_id: int, bot) -> Tuple[bool, List[str]]:
-    """
-    Check membership - returns (all_joined, missing_list)
-    IMPORTANT: Bot must be ADMIN in all channels/groups
-    """
-    missing = []
-    for channel in FORCE_CHANNELS:
-        try:
-            member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
-            status = member.status
-            # Valid statuses: creator, administrator, member, restricted
-            if status in ["left", "kicked"]:
-                missing.append(channel)
-                logger.info(f"❌ User {user_id} NOT in {channel} (status: {status})")
-            else:
-                logger.info(f"✅ User {user_id} in {channel} (status: {status})")
-        except Exception as e:
-            logger.error(f"🚨 Check failed for {channel}: {e}")
-            # IMPORTANT: Agar bot admin nahi hai to error aayega
-            # Iske bawajood user ko andar aane do (fail-open) 
-            # warna bot kabhi kaam nahi karega
-            # missing.append(channel)   # <-- ye line comment kar do
-    return (len(missing) == 0, missing)
-
-
-# ---------- PING (FIXED) ----------
-async def ping(update, context):
-    await update.message.reply_text("🏓 Pong! ⚡ *Bot is alive.*", parse_mode=ParseMode.MARKDOWN)
-    missing = []
-    for channel in FORCE_CHANNELS:
-        try:
-            member = await bot.get_chat_member(channel, user_id)
-            if member.status in ["left", "kicked"]:
-                missing.append(channel)
-        except Exception as e:
-            logger.warning(f"Force join check error for {channel}: {e}")
-            missing.append(channel)
-    return (len(missing) == 0, missing)
-
-def get_join_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK)],
-        [InlineKeyboardButton("💬 Join Group", url=GROUP_LINK)],
-        [InlineKeyboardButton("✅ I've Joined — Verify", callback_data="check_join")],
-    ])
 
 # ---------- DATABASE ----------
 DB_PATH = "bomber.db"
@@ -223,7 +162,6 @@ def init_db():
         message TEXT, sms_count INTEGER, job_id TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
 
-    # migrations
     c.execute("PRAGMA table_info(users)")
     cols = [r[1] for r in c.fetchall()]
     for col, ddl in [
@@ -365,21 +303,18 @@ def set_ban(user_id, banned):
     conn.commit(); conn.close()
 
 def db_register_user(user_id, username, first_name):
-    """Returns (is_new, was_already_registered)."""
     conn = _connect(); c = conn.cursor()
-    c.execute("SELECT user_id, referred_by FROM users WHERE user_id=?", (user_id,))
+    c.execute("SELECT user_id FROM users WHERE user_id=?", (user_id,))
     row = c.fetchone()
     if row:
-        # User exists — update profile only
         c.execute("UPDATE users SET username=?, first_name=? WHERE user_id=?",
                   (username, first_name, user_id))
         conn.commit(); conn.close()
-        return (False, True)
-    else:
-        c.execute("INSERT INTO users (user_id, credits, username, first_name, joined_at) VALUES (?,?,?,?,?)",
-                  (user_id, 0, username, first_name, datetime.now().isoformat()))
-        conn.commit(); conn.close()
-        return (True, False)
+        return False
+    c.execute("INSERT INTO users (user_id, credits, username, first_name, joined_at) VALUES (?,?,?,?,?)",
+              (user_id, 0, username, first_name, datetime.now().isoformat()))
+    conn.commit(); conn.close()
+    return True
 
 def get_user_info(user_id):
     conn = _connect(); conn.row_factory = sqlite3.Row
@@ -425,32 +360,21 @@ def db_redeem_key(key_string, user_id):
     conn.commit(); conn.close()
     return True
 
-# ---------- REFER SYSTEM (100% REAL) ----------
-def db_process_refer(referrer_id, new_user_id) -> bool:
-    """
-    TRUE refer only:
-    - referrer != new_user
-    - referrer must exist in DB
-    - new_user must NOT already be in refer_history (UNIQUE)
-    - new_user must NOT have referred_by already set
-    """
+# ---------- REFER SYSTEM ----------
+def db_process_refer(referrer_id, new_user_id):
     if referrer_id == new_user_id:
         return False
-
     conn = _connect(); c = conn.cursor()
     c.execute("SELECT user_id FROM users WHERE user_id=?", (referrer_id,))
     if not c.fetchone():
         conn.close(); return False
-
     c.execute("SELECT 1 FROM refer_history WHERE referred_id=?", (new_user_id,))
     if c.fetchone():
         conn.close(); return False
-
     c.execute("SELECT referred_by FROM users WHERE user_id=?", (new_user_id,))
     row = c.fetchone()
     if row and row[0] is not None:
         conn.close(); return False
-
     c.execute("INSERT INTO refer_history (referrer_id, referred_id, credited) VALUES (?,?,1)",
               (referrer_id, new_user_id))
     c.execute("UPDATE users SET credits = credits + ?, refer_count = refer_count + 1 WHERE user_id=?",
@@ -458,6 +382,31 @@ def db_process_refer(referrer_id, new_user_id) -> bool:
     c.execute("UPDATE users SET referred_by=? WHERE user_id=?", (referrer_id, new_user_id))
     conn.commit(); conn.close()
     return True
+
+# ---------- FORCE JOIN ----------
+async def check_channel_membership(user_id, bot):
+    """Check membership. Bot must be ADMIN in channels. Fail-open on error."""
+    missing = []
+    for channel in FORCE_CHANNELS:
+        try:
+            member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
+            status = member.status
+            if status in ["left", "kicked"]:
+                missing.append(channel)
+                logger.info(f"❌ User {user_id} NOT in {channel} (status: {status})")
+            else:
+                logger.info(f"✅ User {user_id} in {channel} (status: {status})")
+        except Exception as e:
+            logger.error(f"🚨 Check failed for {channel}: {e}")
+            # Fail-open: don't block user if bot can't check
+    return (len(missing) == 0, missing)
+
+def get_join_keyboard():
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK)],
+        [InlineKeyboardButton("💬 Join Group", url=GROUP_LINK)],
+        [InlineKeyboardButton("✅ I've Joined — Verify", callback_data="check_join")],
+    ])
 
 # ---------- FIREBASE ----------
 async def firebase_request(url, method="GET", payload=None, timeout=15):
@@ -660,7 +609,7 @@ def get_main_keyboard(user_id):
         kb.append(["🛡️ Admin Panel"])
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
-# ---------- NEW USER DM ----------
+# ---------- NOTIFY ADMIN ----------
 async def notify_admin_new_user(bot, user_id, username, first_name, referrer_id=None):
     ref_line = f"🎁 *Referred By:* `{referrer_id}`" if referrer_id else "🎁 *Referred By:* `None`"
     text = (
@@ -704,12 +653,10 @@ async def ping(update, context):
     await update.message.reply_text("🏓 Pong! ⚡ *Bot is alive.*", parse_mode=ParseMode.MARKDOWN)
 
 # ---------- /START ----------
-# ---------- /START (FIXED) ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_id = user.id
 
-    # Parse refer
     referrer_id = None
     if context.args:
         try:
@@ -717,7 +664,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             referrer_id = None
 
-    is_new, _ = db_register_user(user_id, user.username, user.first_name)
+    is_new = db_register_user(user_id, user.username, user.first_name)
 
     refer_credited = False
     if is_new and referrer_id and referrer_id != user_id:
@@ -741,33 +688,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"notify admin failed: {e}")
 
-    # ===== FORCE JOIN CHECK =====
     joined, missing = await check_channel_membership(user_id, context.bot)
 
     if not joined:
-        # User ko join message bhejo
         missing_text = "\n".join([f"❌ {ch}" for ch in missing])
-        joined_text = "\n".join([f"✅ {ch}" for ch in FORCE_CHANNELS if ch not in missing])
-
         await update.message.reply_text(
             "╔══════════════════════════════════╗\n"
             "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
             "╚══════════════════════════════════╝\n\n"
-            "⚠️ *You MUST join our Channel & Group first!*\n\n"
-            f"*Status:*\n{missing_text if missing_text else joined_text}\n\n"
+            "⚠️ *You MUST join our Channel & Group!*\n\n"
+            f"*Missing:*\n{missing_text}\n\n"
             "📌 *Steps:*\n"
-            "1️⃣ Join Channel (button below)\n"
-            "2️⃣ Join Group (button below)\n"
-            "3️⃣ Come back here\n"
-            "4️⃣ Press ✅ *Verify* button\n\n"
-            "⚠️ *Note:* If you leave after joining, bot will block you again!\n\n"
+            "1️⃣ Join Channel\n"
+            "2️⃣ Join Group\n"
+            "3️⃣ Come back\n"
+            "4️⃣ Press ✅ *Verify*\n\n"
             f"👑 *Owner:* {OWNER}",
             reply_markup=get_join_keyboard(),
             parse_mode=ParseMode.MARKDOWN,
         )
         return
 
-    # ===== ALL JOINED - SHOW MAIN MENU =====
     credits = get_user_credits(user_id)
     is_admin = user_id in ADMIN_IDS
     role = "👑 *ADMIN*" if is_admin else "⚡ *USER*"
@@ -787,89 +728,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "⚡ *Multi-User:* Unlimited\n"
         "🛡️ *Status:* ✅ Online\n"
         f"{LINE}\n\n"
-        f"🎁 *Your Refer Link:*\n`{ref_link}`\n"
-        f"💡 1 Refer = {REFER_CREDITS} Credits\n"
-        f"{LINE}\n\n"
-        "👇 Use buttons below ✨"
-    )
-    if refer_credited:
-        text = f"🎁 *Refer Bonus Added!*\n\n" + text
-
-    await update.message.reply_text(
-        text,
-        reply_markup=get_main_keyboard(user_id),
-        parse_mode=ParseMode.MARKDOWN
-    )
-    user = update.effective_user
-    user_id = user.id
-
-    referrer_id = None
-    if context.args:
-        try:
-            referrer_id = int(context.args[0])
-        except Exception:
-            referrer_id = None
-
-    is_new, _ = db_register_user(user_id, user.username, user.first_name)
-
-    refer_credited = False
-    if is_new and referrer_id and referrer_id != user_id:
-        refer_credited = db_process_refer(referrer_id, user_id)
-        if refer_credited:
-            # Notify referrer
-            try:
-                await context.bot.send_message(
-                    referrer_id,
-                    f"🎁 *New Refer!* +{REFER_CREDITS} credits added!\n"
-                    f"👤 {user.first_name or 'User'} joined via your link.",
-                    parse_mode=ParseMode.MARKDOWN
-                )
-            except Exception:
-                pass
-
-    if is_new:
-        try:
-            await notify_admin_new_user(context.bot, user_id,
-                                        user.username, user.first_name,
-                                        referrer_id if refer_credited else None)
-        except Exception as e:
-            logger.warning(f"notify admin failed: {e}")
-
-    # Force join check
-    joined, missing = await check_channel_membership(user_id, context.bot)
-    if not joined:
-        await update.message.reply_text(
-            "╔══════════════════════════════════╗\n"
-            "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
-            "╚══════════════════════════════════╝\n\n"
-            "⚠️ *You must join our Channel & Group to use this bot.*\n\n"
-            "Join both, then press ✅ *Verify*.\n"
-            "The bot will re-check every action.",
-            reply_markup=get_join_keyboard(),
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return
-
-    credits = get_user_credits(user_id)
-    is_admin = user_id in ADMIN_IDS
-    role = "👑 *ADMIN*" if is_admin else "⚡ *USER*"
-    me = await context.bot.get_me()
-    ref_link = f"https://t.me/{me.username}?start={user_id}"
-
-    text = (
-        "╔══════════════════════════════════╗\n"
-        "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
-        "╚══════════════════════════════════╝\n\n"
-        f"👤 *User ID:* `{user_id}`\n"
-        f"💎 *Credits:* {credits}\n"
-        f"🎖️ *Role:* {role}\n"
-        f"👑 *Owner:* {OWNER}\n\n"
-        f"{LINE}\n"
-        "🚀 *Server:* Ultra-Fast Async\n"
-        "⚡ *Multi-User:* Unlimited\n"
-        "🛡️ *Status:* ✅ Online\n"
-        f"{LINE}\n\n"
-        f"🎁 *Your Refer Link:*\n`{ref_link}`\n"
+        f"🎁 *Refer Link:*\n`{ref_link}`\n"
         f"💡 1 Refer = {REFER_CREDITS} Credits\n"
         f"{LINE}\n\n"
         "👇 Use buttons below ✨"
@@ -879,88 +738,54 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(text, reply_markup=get_main_keyboard(user_id), parse_mode=ParseMode.MARKDOWN)
 
-# ---------- CALLBACK ----------
+# ---------- CALLBACK HANDLER ----------
 async def callback_handler(update: Update, context):
     query = update.callback_query
     await query.answer()
     data = query.data
     user_id = update.effective_user.id
 
+    # ---- CHECK JOIN (top priority) ----
     if data == "check_join":
-    joined, missing = await check_channel_membership(user_id, BOT)
-    if joined:
-        credits = get_user_credits(user_id)
-        is_admin = user_id in ADMIN_IDS
-        role = "👑 *ADMIN*" if is_admin else "⚡ *USER*"
-        me = await BOT.get_me()
-        ref_link = f"https://t.me/{me.username}?start={user_id}"
-
-        await query.edit_message_text(
-            "╔══════════════════════════════════╗\n"
-            "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
-            "╚══════════════════════════════════╝\n\n"
-            "✅ *VERIFIED!* Welcome!\n\n"
-            f"👤 *User ID:* `{user_id}`\n"
-            f"💎 *Credits:* {credits}\n"
-            f"🎖️ *Role:* {role}\n"
-            f"👑 *Owner:* {OWNER}\n\n"
-            f"{LINE}\n"
-            "🚀 *Server:* Ultra-Fast Async\n"
-            "⚡ *Multi-User:* Unlimited\n"
-            "🛡️ *Status:* ✅ Online\n"
-            f"{LINE}\n\n"
-            f"🎁 *Refer Link:*\n`{ref_link}`\n"
-            f"💡 1 Refer = {REFER_CREDITS} Credits\n"
-            f"{LINE}\n\n"
-            "👇 Use buttons below ✨",
-            parse_mode=ParseMode.MARKDOWN
-        )
-        await query.message.reply_text(
-            "🏠 *Main menu loaded* 👇",
-            reply_markup=get_main_keyboard(user_id),
-            parse_mode=ParseMode.MARKDOWN
-        )
-    else:
-        missing_text = "\n".join([f"❌ {ch}" for ch in missing])
-        await query.edit_message_text(
-            "╔══════════════════════════════════╗\n"
-            "   ⚠️ *NOT VERIFIED YET*\n"
-            "╚══════════════════════════════════╝\n\n"
-            "❌ *You haven't joined all channels!*\n\n"
-            f"*Missing:*\n{missing_text}\n\n"
-            "📌 *Steps:*\n"
-            "1️⃣ Join Channel\n"
-            "2️⃣ Join Group\n"
-            "3️⃣ Come back\n"
-            "4️⃣ Press ✅ *Verify* again\n\n"
-            f"👑 *Owner:* {OWNER}",
-            reply_markup=get_join_keyboard(),
-            parse_mode=ParseMode.MARKDOWN
-        )
-    return
         joined, missing = await check_channel_membership(user_id, BOT)
         if joined:
             credits = get_user_credits(user_id)
             is_admin = user_id in ADMIN_IDS
             role = "👑 *ADMIN*" if is_admin else "⚡ *USER*"
+            me = await BOT.get_me()
+            ref_link = f"https://t.me/{me.username}?start={user_id}"
             await query.edit_message_text(
-                f"✅ *Verified!*\n\n💎 Credits: *{credits}*\n🎖️ Role: {role}",
+                "╔══════════════════════════════════╗\n"
+                "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
+                "╚══════════════════════════════════╝\n\n"
+                "✅ *VERIFIED!*\n\n"
+                f"👤 *User ID:* `{user_id}`\n"
+                f"💎 *Credits:* {credits}\n"
+                f"🎖️ *Role:* {role}\n"
+                f"👑 *Owner:* {OWNER}\n\n"
+                f"{LINE}\n"
+                f"🎁 *Refer Link:*\n`{ref_link}`\n"
+                f"{LINE}\n\n"
+                "👇 Use buttons below ✨",
                 parse_mode=ParseMode.MARKDOWN
             )
             await query.message.reply_text(
-                "🏠 Main menu loaded 👇",
-                reply_markup=get_main_keyboard(user_id)
+                "🏠 *Main menu loaded* 👇",
+                reply_markup=get_main_keyboard(user_id),
+                parse_mode=ParseMode.MARKDOWN
             )
         else:
-            ch_list = "\n".join([f"• {ch}" for ch in missing])
+            missing_text = "\n".join([f"❌ {ch}" for ch in missing])
             await query.edit_message_text(
-                f"❌ *Not joined yet!*\n\nMissing:\n{ch_list}\n\n"
-                "Join and press ✅ Verify again.",
+                "⚠️ *NOT VERIFIED YET*\n\n"
+                f"*Missing:*\n{missing_text}\n\n"
+                "Join both, then press ✅ *Verify* again.",
                 reply_markup=get_join_keyboard(),
                 parse_mode=ParseMode.MARKDOWN
             )
         return
 
+    # ---- FORCE JOIN CHECK ----
     if not await ensure_join(update, context):
         return
 
@@ -968,6 +793,7 @@ async def callback_handler(update: Update, context):
         await query.edit_message_text("🚫 You are banned.")
         return
 
+    # ---- OTHER CALLBACKS ----
     if data == "balance":
         credits = get_user_credits(user_id)
         await query.edit_message_text(
@@ -978,7 +804,6 @@ async def callback_handler(update: Update, context):
             f"🛒 *BUY CREDITS*\n{LINE}\n"
             f"💡 *1 Credit = ₹{CREDIT_PRICE}*\n\n"
             f"📩 DM {BUY_CONTACT} to buy credits.\n"
-            f"Send payment, then admin will add credits to your account.\n\n"
             f"{LINE}",
             parse_mode=ParseMode.MARKDOWN)
     elif data == "status":
@@ -1004,7 +829,7 @@ async def callback_handler(update: Update, context):
             f"🎁 *REFER & EARN*\n{LINE}\n"
             f"💡 1 Valid Refer = *{REFER_CREDITS} Credits*\n\n"
             f"🔗 Your Link:\n`{link}`\n\n"
-            f"⚠️ Rules:\n"
+            f"⚠️ *Rules:*\n"
             f"• Only NEW users count\n"
             f"• Old users won't count\n"
             f"• Fake refers blocked\n"
@@ -1019,7 +844,6 @@ async def callback_handler(update: Update, context):
             f"Credits Earned: *{count * REFER_CREDITS}*\n{LINE}",
             parse_mode=ParseMode.MARKDOWN)
     elif data == "send_now":
-        # User chose "Send Now" — schedule_time = None
         context.user_data["schedule_time"] = None
         await query.message.reply_text("🚀 Sending now...")
         await _launch_bomb(update, context)
@@ -1094,13 +918,13 @@ async def bomb_wizard_start(update, context):
         await update.callback_query.answer()
         await update.callback_query.message.reply_text(
             "💣 *LAUNCH BOMB*\n" + LINE + "\n"
-            "📞 Enter target phone number (with country code):\n"
+            "📞 Enter target phone number:\n"
             "Type /cancel to abort.",
             parse_mode=ParseMode.MARKDOWN)
     else:
         await update.message.reply_text(
             "💣 *LAUNCH BOMB*\n" + LINE + "\n"
-            "📞 Enter target phone number (with country code):\n"
+            "📞 Enter target phone number:\n"
             "Type /cancel to abort.",
             parse_mode=ParseMode.MARKDOWN)
     return TARGET
@@ -1168,8 +992,7 @@ async def bomb_speed(update, context):
         [InlineKeyboardButton("🕒 Schedule Later", callback_data="schedule_later")],
     ]
     await q.message.reply_text(
-        f"⏱️ Delay: *{delay}s*\n\n"
-        "🕒 Choose when to send:",
+        f"⏱️ Delay: *{delay}s*\n\n🕒 Choose when to send:",
         reply_markup=InlineKeyboardMarkup(kb),
         parse_mode=ParseMode.MARKDOWN)
     return SCHEDULE
@@ -1193,7 +1016,6 @@ async def bomb_schedule(update, context):
         return SCHEDULE
 
 async def _launch_bomb(update, context):
-    """Common launcher for Send Now / Scheduled."""
     user_id = update.effective_user.id
     chat_id = update.effective_chat.id
     target = context.user_data.get("target")
@@ -1203,7 +1025,7 @@ async def _launch_bomb(update, context):
     schedule_time = context.user_data.get("schedule_time")
 
     if not all([target, message, count, delay is not None]):
-        await context.bot.send_message(chat_id, "❌ Missing data. Please /bombwizard again.")
+        await context.bot.send_message(chat_id, "❌ Missing data. Please start over.")
         context.user_data.clear()
         return
 
@@ -1542,16 +1364,14 @@ async def broadcast_command(update, context):
         await asyncio.sleep(0.05)
     await update.message.reply_text(f"📢 Done. ✅ {sent} | ❌ {fail}")
 
-# ---------- BUTTON HANDLER (FIXED ORDER) ----------
+# ---------- BUTTON HANDLER ----------
 async def button_handler(update, context):
     text = update.message.text
     user_id = update.effective_user.id
 
-    # Skip processing for commands
     if text and text.startswith("/"):
         return
 
-    # Non-admin checks
     if user_id not in ADMIN_IDS:
         if is_banned(user_id):
             await update.message.reply_text("🚫 You are banned.")
@@ -1559,7 +1379,6 @@ async def button_handler(update, context):
         if not await ensure_join(update, context):
             return
 
-    # Redeem flow first
     if context.user_data.get("awaiting_redeem"):
         key = text.strip()
         if db_redeem_key(key, user_id):
@@ -1572,7 +1391,6 @@ async def button_handler(update, context):
         context.user_data.pop("awaiting_redeem", None)
         return
 
-    # Menu buttons
     if text == "💣 Launch Bomb":
         await bomb_wizard_start(update, context)
     elif text == "💰 Balance":
@@ -1629,7 +1447,6 @@ async def show_devices_from_message(update):
     await update.message.reply_text(text, parse_mode=ParseMode.MARKDOWN)
 
 async def show_stats_from_message(update):
-    """Stats shows ONLY user count — no numbers."""
     total_users = db_get_all_users_count()
     jobs = db_get_jobs(limit=100)
     total_sent = sum(j.get("success_count", 0) or 0 for j in jobs)
@@ -1721,7 +1538,6 @@ def main():
     )
     app.add_handler(conv)
 
-    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("bomb", quick_bomb))
@@ -1733,7 +1549,6 @@ def main():
     app.add_handler(CommandHandler("refer", refer_command))
     app.add_handler(CommandHandler("myrefers", my_referrals))
 
-    # Admin
     app.add_handler(CommandHandler("admin", admin_panel_command))
     app.add_handler(CommandHandler("ban", ban_command))
     app.add_handler(CommandHandler("unban", unban_command))
@@ -1747,10 +1562,7 @@ def main():
     app.add_handler(CommandHandler("addfb", add_firebase_command))
     app.add_handler(CommandHandler("deletefb", delete_firebase_command))
 
-    # Text button handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
-
-    # Callback
     app.add_handler(CallbackQueryHandler(callback_handler))
 
     logger.info("🔥 Bronx Ultra Bomber Bot started.")
