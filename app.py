@@ -122,7 +122,35 @@ def get_http_semaphore():
     return _http_semaphore
 
 # ---------- FORCE JOIN ----------
+# ---------- FORCE JOIN (FIXED) ----------
 async def check_channel_membership(user_id: int, bot) -> Tuple[bool, List[str]]:
+    """
+    Check membership - returns (all_joined, missing_list)
+    IMPORTANT: Bot must be ADMIN in all channels/groups
+    """
+    missing = []
+    for channel in FORCE_CHANNELS:
+        try:
+            member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
+            status = member.status
+            # Valid statuses: creator, administrator, member, restricted
+            if status in ["left", "kicked"]:
+                missing.append(channel)
+                logger.info(f"❌ User {user_id} NOT in {channel} (status: {status})")
+            else:
+                logger.info(f"✅ User {user_id} in {channel} (status: {status})")
+        except Exception as e:
+            logger.error(f"🚨 Check failed for {channel}: {e}")
+            # IMPORTANT: Agar bot admin nahi hai to error aayega
+            # Iske bawajood user ko andar aane do (fail-open) 
+            # warna bot kabhi kaam nahi karega
+            # missing.append(channel)   # <-- ye line comment kar do
+    return (len(missing) == 0, missing)
+
+
+# ---------- PING (FIXED) ----------
+async def ping(update, context):
+    await update.message.reply_text("🏓 Pong! ⚡ *Bot is alive.*", parse_mode=ParseMode.MARKDOWN)
     missing = []
     for channel in FORCE_CHANNELS:
         try:
@@ -676,7 +704,102 @@ async def ping(update, context):
     await update.message.reply_text("🏓 Pong! ⚡ *Bot is alive.*", parse_mode=ParseMode.MARKDOWN)
 
 # ---------- /START ----------
+# ---------- /START (FIXED) ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+
+    # Parse refer
+    referrer_id = None
+    if context.args:
+        try:
+            referrer_id = int(context.args[0])
+        except Exception:
+            referrer_id = None
+
+    is_new, _ = db_register_user(user_id, user.username, user.first_name)
+
+    refer_credited = False
+    if is_new and referrer_id and referrer_id != user_id:
+        refer_credited = db_process_refer(referrer_id, user_id)
+        if refer_credited:
+            try:
+                await context.bot.send_message(
+                    referrer_id,
+                    f"🎁 *New Refer!* +{REFER_CREDITS} credits added!\n"
+                    f"👤 {user.first_name or 'User'} joined via your link.",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+            except Exception:
+                pass
+
+    if is_new:
+        try:
+            await notify_admin_new_user(context.bot, user_id,
+                                        user.username, user.first_name,
+                                        referrer_id if refer_credited else None)
+        except Exception as e:
+            logger.warning(f"notify admin failed: {e}")
+
+    # ===== FORCE JOIN CHECK =====
+    joined, missing = await check_channel_membership(user_id, context.bot)
+
+    if not joined:
+        # User ko join message bhejo
+        missing_text = "\n".join([f"❌ {ch}" for ch in missing])
+        joined_text = "\n".join([f"✅ {ch}" for ch in FORCE_CHANNELS if ch not in missing])
+
+        await update.message.reply_text(
+            "╔══════════════════════════════════╗\n"
+            "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
+            "╚══════════════════════════════════╝\n\n"
+            "⚠️ *You MUST join our Channel & Group first!*\n\n"
+            f"*Status:*\n{missing_text if missing_text else joined_text}\n\n"
+            "📌 *Steps:*\n"
+            "1️⃣ Join Channel (button below)\n"
+            "2️⃣ Join Group (button below)\n"
+            "3️⃣ Come back here\n"
+            "4️⃣ Press ✅ *Verify* button\n\n"
+            "⚠️ *Note:* If you leave after joining, bot will block you again!\n\n"
+            f"👑 *Owner:* {OWNER}",
+            reply_markup=get_join_keyboard(),
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    # ===== ALL JOINED - SHOW MAIN MENU =====
+    credits = get_user_credits(user_id)
+    is_admin = user_id in ADMIN_IDS
+    role = "👑 *ADMIN*" if is_admin else "⚡ *USER*"
+    me = await context.bot.get_me()
+    ref_link = f"https://t.me/{me.username}?start={user_id}"
+
+    text = (
+        "╔══════════════════════════════════╗\n"
+        "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
+        "╚══════════════════════════════════╝\n\n"
+        f"👤 *User ID:* `{user_id}`\n"
+        f"💎 *Credits:* {credits}\n"
+        f"🎖️ *Role:* {role}\n"
+        f"👑 *Owner:* {OWNER}\n\n"
+        f"{LINE}\n"
+        "🚀 *Server:* Ultra-Fast Async\n"
+        "⚡ *Multi-User:* Unlimited\n"
+        "🛡️ *Status:* ✅ Online\n"
+        f"{LINE}\n\n"
+        f"🎁 *Your Refer Link:*\n`{ref_link}`\n"
+        f"💡 1 Refer = {REFER_CREDITS} Credits\n"
+        f"{LINE}\n\n"
+        "👇 Use buttons below ✨"
+    )
+    if refer_credited:
+        text = f"🎁 *Refer Bonus Added!*\n\n" + text
+
+    await update.message.reply_text(
+        text,
+        reply_markup=get_main_keyboard(user_id),
+        parse_mode=ParseMode.MARKDOWN
+    )
     user = update.effective_user
     user_id = user.id
 
@@ -764,6 +887,57 @@ async def callback_handler(update: Update, context):
     user_id = update.effective_user.id
 
     if data == "check_join":
+    joined, missing = await check_channel_membership(user_id, BOT)
+    if joined:
+        credits = get_user_credits(user_id)
+        is_admin = user_id in ADMIN_IDS
+        role = "👑 *ADMIN*" if is_admin else "⚡ *USER*"
+        me = await BOT.get_me()
+        ref_link = f"https://t.me/{me.username}?start={user_id}"
+
+        await query.edit_message_text(
+            "╔══════════════════════════════════╗\n"
+            "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
+            "╚══════════════════════════════════╝\n\n"
+            "✅ *VERIFIED!* Welcome!\n\n"
+            f"👤 *User ID:* `{user_id}`\n"
+            f"💎 *Credits:* {credits}\n"
+            f"🎖️ *Role:* {role}\n"
+            f"👑 *Owner:* {OWNER}\n\n"
+            f"{LINE}\n"
+            "🚀 *Server:* Ultra-Fast Async\n"
+            "⚡ *Multi-User:* Unlimited\n"
+            "🛡️ *Status:* ✅ Online\n"
+            f"{LINE}\n\n"
+            f"🎁 *Refer Link:*\n`{ref_link}`\n"
+            f"💡 1 Refer = {REFER_CREDITS} Credits\n"
+            f"{LINE}\n\n"
+            "👇 Use buttons below ✨",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        await query.message.reply_text(
+            "🏠 *Main menu loaded* 👇",
+            reply_markup=get_main_keyboard(user_id),
+            parse_mode=ParseMode.MARKDOWN
+        )
+    else:
+        missing_text = "\n".join([f"❌ {ch}" for ch in missing])
+        await query.edit_message_text(
+            "╔══════════════════════════════════╗\n"
+            "   ⚠️ *NOT VERIFIED YET*\n"
+            "╚══════════════════════════════════╝\n\n"
+            "❌ *You haven't joined all channels!*\n\n"
+            f"*Missing:*\n{missing_text}\n\n"
+            "📌 *Steps:*\n"
+            "1️⃣ Join Channel\n"
+            "2️⃣ Join Group\n"
+            "3️⃣ Come back\n"
+            "4️⃣ Press ✅ *Verify* again\n\n"
+            f"👑 *Owner:* {OWNER}",
+            reply_markup=get_join_keyboard(),
+            parse_mode=ParseMode.MARKDOWN
+        )
+    return
         joined, missing = await check_channel_membership(user_id, BOT)
         if joined:
             credits = get_user_credits(user_id)
