@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-Premium Bronx Bomber Bot - FINAL CLEAN v5
-- Fixed: force join, duplicate handlers, conversation conflicts
-- Fixed: main menu after verify, admin notifications
+Premium Bronx Bomber Bot - FINAL CLEAN v6
+- FORCE JOIN REMOVED COMPLETELY
+- No channel link, no verify, no blocking
+- /start → direct main menu
 """
 
 import asyncio
@@ -50,10 +51,7 @@ TOKEN = os.environ.get("BOT_TOKEN", "8454255227:AAGBi0RaNAsYbjRb1RtibuLme3895r9f
 ADMIN_IDS = [6840524720]
 OWNER = "@BRONX_ULTRA"
 BUY_CONTACT = "@BRONX_ULTRA"
-CHANNEL_LINK = "https://t.me/bronx_ultra_osint"
 GROUP_LINK = "https://t.me/+mZxPZHUNHA0xMGYy"
-
-FORCE_CHANNELS = ["@bronx_ultra_osint"]
 
 REFER_CREDITS = 5
 CREDIT_PRICE = 1
@@ -383,41 +381,6 @@ def db_process_refer(referrer_id, new_user_id):
     conn.commit(); conn.close()
     return True
 
-# ---------- FORCE JOIN ----------
-async def check_channel_membership(user_id, bot):
-    """
-    Check membership. Bot must be ADMIN in channels.
-    If bot cannot check (not admin / channel invalid) -> fail OPEN (allow user).
-    """
-    missing = []
-    check_failed = False
-    for channel in FORCE_CHANNELS:
-        try:
-            member = await bot.get_chat_member(chat_id=channel, user_id=user_id)
-            status = member.status
-            if status in ["left", "kicked"]:
-                missing.append(channel)
-                logger.info(f"❌ User {user_id} NOT in {channel} (status: {status})")
-            else:
-                logger.info(f"✅ User {user_id} in {channel} (status: {status})")
-        except Exception as e:
-            logger.error(f"🚨 Check failed for {channel}: {e}")
-            check_failed = True
-
-    # Fail-open if we couldn't check any channel (bot not admin, etc.)
-    if check_failed and not missing:
-        logger.warning("⚠️ Force-join check failed → allowing user (fail-open)")
-        return (True, [])
-
-    return (len(missing) == 0, missing)
-
-def get_join_keyboard():
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 Join Channel", url=CHANNEL_LINK)],
-        [InlineKeyboardButton("💬 Join Group", url=GROUP_LINK)],
-        [InlineKeyboardButton("✅ I've Joined — Verify", callback_data="check_join")],
-    ])
-
 # ---------- FIREBASE ----------
 async def firebase_request(url, method="GET", payload=None, timeout=15):
     raw = url.rstrip("/")
@@ -663,28 +626,6 @@ async def notify_admin_new_user(bot, user_id, username, first_name, referrer_id=
         except Exception as e:
             logger.warning(f"Could not DM admin {admin}: {e}")
 
-# ---------- FORCE JOIN WRAPPER ----------
-async def ensure_join(update, context) -> bool:
-    user_id = update.effective_user.id
-    joined, missing = await check_channel_membership(user_id, context.bot)
-    if not joined:
-        kb = get_join_keyboard()
-        msg = (
-            "🚫 *Access Denied*\n\n"
-            "You must join our Channel & Group to use this bot.\n\n"
-            "Join both, then press ✅ *Verify*."
-        )
-        try:
-            if update.callback_query:
-                await update.callback_query.edit_message_text(msg, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
-            else:
-                await update.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
-        except Exception:
-            if update.callback_query:
-                await update.callback_query.message.reply_text(msg, reply_markup=kb, parse_mode=ParseMode.MARKDOWN)
-        return False
-    return True
-
 # ---------- PING ----------
 async def ping(update, context):
     await update.message.reply_text("🏓 Pong! ⚡ *Bot is alive.*", parse_mode=ParseMode.MARKDOWN)
@@ -717,7 +658,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             except Exception:
                 pass
 
-    # Notify admin only if truly new user
     if is_new:
         try:
             await notify_admin_new_user(context.bot, user_id,
@@ -726,27 +666,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"notify admin failed: {e}")
 
-    joined, missing = await check_channel_membership(user_id, context.bot)
-
-    if not joined:
-        missing_text = "\n".join([f"❌ {ch}" for ch in missing])
-        await update.message.reply_text(
-            "╔══════════════════════════════════╗\n"
-            "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
-            "╚══════════════════════════════════╝\n\n"
-            "⚠️ *You MUST join our Channel & Group!*\n\n"
-            f"*Missing:*\n{missing_text}\n\n"
-            "📌 *Steps:*\n"
-            "1️⃣ Join Channel\n"
-            "2️⃣ Join Group\n"
-            "3️⃣ Come back\n"
-            "4️⃣ Press ✅ *Verify*\n\n"
-            f"👑 *Owner:* {OWNER}",
-            reply_markup=get_join_keyboard(),
-            parse_mode=ParseMode.MARKDOWN,
-        )
-        return
-
+    # 🔥 DIRECT MAIN MENU (no force join)
     text = await build_main_menu_text(context.bot, user_id)
     if refer_credited:
         text = f"🎁 *Refer Bonus Added!*\n\n" + text
@@ -760,40 +680,10 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = update.effective_user.id
 
-    # ---- CHECK JOIN (top priority) ----
-    if data == "check_join":
-        joined, missing = await check_channel_membership(user_id, BOT)
-        if joined:
-            text = await build_main_menu_text(BOT, user_id)
-            await query.edit_message_text(
-                text.replace("👇 Use buttons below ✨", "✅ *VERIFIED!*\n\n👇 Use buttons below ✨"),
-                parse_mode=ParseMode.MARKDOWN
-            )
-            await query.message.reply_text(
-                "🏠 *Main menu loaded* 👇",
-                reply_markup=get_main_keyboard(user_id),
-                parse_mode=ParseMode.MARKDOWN
-            )
-        else:
-            missing_text = "\n".join([f"❌ {ch}" for ch in missing])
-            await query.edit_message_text(
-                "⚠️ *NOT VERIFIED YET*\n\n"
-                f"*Missing:*\n{missing_text}\n\n"
-                "Join both, then press ✅ *Verify* again.",
-                reply_markup=get_join_keyboard(),
-                parse_mode=ParseMode.MARKDOWN
-            )
-        return
-
-    # ---- FORCE JOIN CHECK ----
-    if not await ensure_join(update, context):
-        return
-
     if is_banned(user_id):
         await query.edit_message_text("🚫 You are banned.")
         return
 
-    # ---- OTHER CALLBACKS ----
     if data == "balance":
         credits = get_user_credits(user_id)
         await query.edit_message_text(
@@ -1066,7 +956,6 @@ async def quick_bomb(update, context):
     user_id = update.effective_user.id
     if is_banned(user_id):
         await update.message.reply_text("🚫 You are banned."); return
-    if not await ensure_join(update, context): return
     args = context.args
     if len(args) < 2:
         await update.message.reply_text("Usage: /bomb <target> <message>"); return
@@ -1376,8 +1265,6 @@ async def button_handler(update, context):
     if user_id not in ADMIN_IDS:
         if is_banned(user_id):
             await update.message.reply_text("🚫 You are banned.")
-            return
-        if not await ensure_join(update, context):
             return
 
     if context.user_data.get("awaiting_redeem"):
