@@ -31,6 +31,11 @@ Premium Noobster Bomber Bot - Enhanced with Credits, Keys, Multi-User, Speed Con
 """
 
 import asyncio
+
+try:
+    asyncio.get_event_loop()
+except RuntimeError:
+    asyncio.set_event_loop(asyncio.new_event_loop())
 import json
 import logging
 import sqlite3
