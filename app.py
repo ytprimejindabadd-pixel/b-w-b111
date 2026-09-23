@@ -48,7 +48,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 
 # ---------- CONFIG ----------
-TOKEN = "8454255227:AAHHVR8Ah7aNg20mj_ouW4FJogwOLBfP17A"
+TOKEN = "8454255227:AAGLKnj9Rpsm7jzS7FzmGbTu12TqEHUG8GU"
 ADMIN_IDS = [6840524720]
 OWNER = "@BRONX_ULTRA"
 
