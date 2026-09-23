@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Premium Bronx Bomber Bot - FINAL CLEAN v6
-- FORCE JOIN REMOVED COMPLETELY
-- No channel link, no verify, no blocking
-- /start → direct main menu
+Premium Bronx Bomber Bot - v5 (No Force Join)
+- /start directly shows full menu
+- No join requirement
+- All other features intact
 """
 
 import asyncio
@@ -51,7 +51,6 @@ TOKEN = os.environ.get("BOT_TOKEN", "8454255227:AAGBi0RaNAsYbjRb1RtibuLme3895r9f
 ADMIN_IDS = [6840524720]
 OWNER = "@BRONX_ULTRA"
 BUY_CONTACT = "@BRONX_ULTRA"
-GROUP_LINK = "https://t.me/+mZxPZHUNHA0xMGYy"
 
 REFER_CREDITS = 5
 CREDIT_PRICE = 1
@@ -582,32 +581,6 @@ def get_main_keyboard(user_id):
         kb.append(["🛡️ Admin Panel"])
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
-# ---------- MAIN MENU TEXT ----------
-async def build_main_menu_text(bot, user_id):
-    credits = get_user_credits(user_id)
-    is_admin = user_id in ADMIN_IDS
-    role = "👑 *ADMIN*" if is_admin else "⚡ *USER*"
-    me = await bot.get_me()
-    ref_link = f"https://t.me/{me.username}?start={user_id}"
-    return (
-        "╔══════════════════════════════════╗\n"
-        "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
-        "╚══════════════════════════════════╝\n\n"
-        f"👤 *User ID:* `{user_id}`\n"
-        f"💎 *Credits:* {credits}\n"
-        f"🎖️ *Role:* {role}\n"
-        f"👑 *Owner:* {OWNER}\n\n"
-        f"{LINE}\n"
-        "🚀 *Server:* Ultra-Fast Async\n"
-        "⚡ *Multi-User:* Unlimited\n"
-        "🛡️ *Status:* ✅ Online\n"
-        f"{LINE}\n\n"
-        f"🎁 *Refer Link:*\n`{ref_link}`\n"
-        f"💡 1 Refer = {REFER_CREDITS} Credits\n"
-        f"{LINE}\n\n"
-        "👇 Use buttons below ✨"
-    )
-
 # ---------- NOTIFY ADMIN ----------
 async def notify_admin_new_user(bot, user_id, username, first_name, referrer_id=None):
     ref_line = f"🎁 *Referred By:* `{referrer_id}`" if referrer_id else "🎁 *Referred By:* `None`"
@@ -625,6 +598,11 @@ async def notify_admin_new_user(bot, user_id, username, first_name, referrer_id=
             await bot.send_message(admin, text, parse_mode=ParseMode.MARKDOWN)
         except Exception as e:
             logger.warning(f"Could not DM admin {admin}: {e}")
+
+# ---------- FORCE JOIN (DISABLED) ----------
+async def ensure_join(update, context) -> bool:
+    """Force join disabled — always returns True."""
+    return True
 
 # ---------- PING ----------
 async def ping(update, context):
@@ -666,15 +644,38 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logger.warning(f"notify admin failed: {e}")
 
-    # 🔥 DIRECT MAIN MENU (no force join)
-    text = await build_main_menu_text(context.bot, user_id)
+    # ===== DIRECT MENU (NO JOIN CHECK) =====
+    credits = get_user_credits(user_id)
+    is_admin = user_id in ADMIN_IDS
+    role = "👑 *ADMIN*" if is_admin else "⚡ *USER*"
+    me = await context.bot.get_me()
+    ref_link = f"https://t.me/{me.username}?start={user_id}"
+
+    text = (
+        "╔══════════════════════════════════╗\n"
+        "   🔥 *BRONX ULTRA BOMBER* 🔥\n"
+        "╚══════════════════════════════════╝\n\n"
+        f"👤 *User ID:* `{user_id}`\n"
+        f"💎 *Credits:* {credits}\n"
+        f"🎖️ *Role:* {role}\n"
+        f"👑 *Owner:* {OWNER}\n\n"
+        f"{LINE}\n"
+        "🚀 *Server:* Ultra-Fast Async\n"
+        "⚡ *Multi-User:* Unlimited\n"
+        "🛡️ *Status:* ✅ Online\n"
+        f"{LINE}\n\n"
+        f"🎁 *Refer Link:*\n`{ref_link}`\n"
+        f"💡 1 Refer = {REFER_CREDITS} Credits\n"
+        f"{LINE}\n\n"
+        "👇 Use buttons below ✨"
+    )
     if refer_credited:
         text = f"🎁 *Refer Bonus Added!*\n\n" + text
 
     await update.message.reply_text(text, reply_markup=get_main_keyboard(user_id), parse_mode=ParseMode.MARKDOWN)
 
 # ---------- CALLBACK HANDLER ----------
-async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def callback_handler(update: Update, context):
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -756,8 +757,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("⛔ Unauthorized."); return
         await manage_firebases(query)
     elif data == "back_main":
-        text = await build_main_menu_text(BOT, user_id)
-        await query.edit_message_text(text, parse_mode=ParseMode.MARKDOWN)
+        await query.edit_message_text("🔙 Back.", reply_markup=get_main_keyboard(user_id))
     elif data.startswith("fb_delete_"):
         if user_id not in ADMIN_IDS: return
         fid = data.split("_")[2]
@@ -1406,7 +1406,6 @@ def main():
     BOT = app.bot
     set_bot(BOT)
 
-    # Conversation handler FIRST (so it takes priority)
     conv = ConversationHandler(
         entry_points=[
             CommandHandler("bombwizard", bomb_wizard_start),
@@ -1427,7 +1426,6 @@ def main():
     )
     app.add_handler(conv)
 
-    # Commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("bomb", quick_bomb))
@@ -1435,6 +1433,7 @@ def main():
     app.add_handler(CommandHandler("buy", buycredits_command))
     app.add_handler(CommandHandler("redeem", redeem_command))
     app.add_handler(CommandHandler("history", history_command))
+    app.add_handler(CommandHandler("cancel", cancel_job_command))
     app.add_handler(CommandHandler("refer", refer_command))
     app.add_handler(CommandHandler("myrefers", my_referrals))
 
@@ -1451,9 +1450,7 @@ def main():
     app.add_handler(CommandHandler("addfb", add_firebase_command))
     app.add_handler(CommandHandler("deletefb", delete_firebase_command))
 
-    # Text buttons
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, button_handler))
-    # Callback queries LAST
     app.add_handler(CallbackQueryHandler(callback_handler))
 
     logger.info("🔥 Bronx Ultra Bomber Bot started.")
